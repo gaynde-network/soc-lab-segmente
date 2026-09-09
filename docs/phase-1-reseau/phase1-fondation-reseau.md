@@ -26,6 +26,15 @@ Le réseau est découpé en 4 segments internes isolés, plus une sortie Interne
 
 Chaque segment correspond à un réseau VMware dédié (VMnet2 à VMnet5, en mode Host-only, DHCP VMware désactivé — c'est pfSense qui gère l'adressage), avec pfSense comme unique point de routage et de filtrage entre eux.
 
+![Adaptateurs réseau VMware côté hôte](./images/adaptateurs-hote-vmnet.png)
+*Les réseaux VMnet2 à VMnet5 créés dans VMware, chacun dédié à un segment.*
+
+![Récapitulatif des interfaces pfSense en console](./images/interfaces-console.png)
+*Confirmation console des 5 interfaces assignées (WAN=em0, LAN=em1, OPT1=em2, OPT2=em3, OPT3=em4) avec leurs adresses IP.*
+
+![Dashboard pfSense — interfaces actives](./images/dashboard-interfaces.png)
+*Toutes les interfaces sont actives (flèche verte) avec les bonnes adresses IP, après renommage des interfaces OPT en noms explicites.*
+
 ## 3. Configuration DHCP
 
 Le service DHCP de pfSense est activé sur les 4 interfaces internes, avec les plages suivantes :
@@ -67,6 +76,18 @@ pfSense filtre le trafic sur l'interface d'entrée. **Tout est bloqué par défa
 | Allow DMZ → any | DMZ | ✅ Créée (sortie Internet pour réponses web/mail) |
 | Aucune règle | ATTACKER | ✅ Conforme à l'objectif (isolation totale) |
 
+![Règles de pare-feu WAN](./images/regles-wan.png)
+*Règles par défaut sur WAN : blocage des réseaux privés (RFC 1918) et des réseaux bogon non attribués par l'IANA. Aucune règle de passage définie = tout trafic entrant depuis Internet est bloqué par défaut, comme attendu pour une interface exposée.*
+
+![Règles de pare-feu LAN](./images/regles-lan.png)
+*Règle "Anti-Lockout" (protège l'accès à l'interface web même en cas d'erreur de configuration) et règle "allow LAN to any" créée par l'assistant initial.*
+
+![Règles de pare-feu SERVERS_AD](./images/regles-serveurs-ad.png)
+*Règle de sortie Internet pour les mises à jour Windows.*
+
+![Règles de pare-feu DMZ](./images/regles-dmz.png)
+*Règle de sortie Internet pour les réponses web/mail.*
+
 ### 4.4 Écart connu à corriger en Phase 2
 
 Les règles **SERVERS_AD → any** et **DMZ → any** créées en 4.3 autorisent techniquement **toutes** les destinations, pas seulement Internet — y compris LAN et les autres segments internes. Ça contredit la politique cible du tableau 4.2, qui prévoit de bloquer SERVERS_AD → LAN/DMZ et DMZ → SERVERS_AD/LAN.
@@ -80,10 +101,20 @@ C'est noté ici sciemment plutôt que corrigé en silence — documenter les lim
 ### Symptôme
 Ping de LAN (192.168.10.10) vers SERVERS_AD (192.168.20.1) : 100% de perte, alors que le ping vers la passerelle LAN (192.168.10.1) fonctionnait normalement.
 
+![Configuration IP statique de l'hôte sur VMnet2](./images/config-ip-statique-vmnet2.png)
+*IP fixe 192.168.10.10/24 configurée côté Windows pour pouvoir tester la connectivité vers pfSense.*
+
+![Ping vers SERVERS_AD en échec](./images/ping-avant-echec.png)
+*Le ping vers la passerelle SERVERS_AD (192.168.20.1) échoue à 100%, alors que le réseau LAN local répond normalement.*
+
 ### Démarche de diagnostic
 1. Vérification des règles de pare-feu LAN → conformes, rien d'anormal.
 2. Vérification du mapping des interfaces physiques (Interfaces > Assignments) → conforme.
 3. Test de ping initié depuis pfSense lui-même (Diagnostics > Ping, source SERVERS_AD) → échec également.
+
+![Ping depuis pfSense lui-même en échec](./images/diagnostic-ping-pfsense-echec.png)
+*Même pfSense, en pingant depuis sa propre interface SERVERS_AD vers l'hôte Windows, obtient 100% de perte — ce qui a réorienté le diagnostic.*
+
 4. Consultation des logs de pare-feu (Status > System Logs > Firewall) → **aucune trace du paquet**, ni bloqué ni autorisé.
 5. L'absence totale de log a réorienté le diagnostic vers la machine émettrice plutôt que vers pfSense.
 6. `tracert 192.168.20.1` sur le PC Windows → révèle que le premier saut partait vers `10.188.0.1` (passerelle Wi-Fi), pas vers pfSense.
@@ -103,6 +134,9 @@ route -p add 192.168.40.0 mask 255.255.255.0 192.168.10.1
 
 ### Vérification
 Les 3 segments répondent au ping (0% de perte), et `tracert` confirme un chemin direct en 1 saut via pfSense.
+
+![Ping vers SERVERS_AD après correction](./images/ping-apres-ok.png)
+*Après ajout des routes statiques, le ping vers 192.168.20.1 répond normalement (0% de perte).*
 
 ### Nettoyage prévu en fin de projet
 ```
